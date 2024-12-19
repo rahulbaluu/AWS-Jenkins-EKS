@@ -7,15 +7,14 @@ pipeline {
         REPO_NAME  = 'job-application-app'
         AWS_ACCOUNT_ID = '148761665406'
         ECR_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${REPO_NAME}"
+        CLUSTER_NAME = 'job-application'
     }
-    parameters {
-        choice(name: 'ACTION', choices: ['apply', 'destroy'], description: 'Select Terraform action')
-    }
+
     stages {
         stage('Checkout SCM') {
             steps {
                 script {
-                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/rahulbaluu/AWS-Terraform-Jenkins-Ansible.git']])
+                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/rahulbaluu/AWS-Jenkins-EKS-Terraform.git']])
                 }
             }
         }
@@ -25,7 +24,7 @@ pipeline {
                 script {
                     // Log in to AWS ECR
                     sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_URI}
+                    aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${ECR_URI}
                     """
                 }
             }
@@ -36,7 +35,7 @@ pipeline {
                 script {
                     // Create the ECR repository if it doesn't exist
                     sh """
-                    aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}
+                    aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_DEFAULT_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_DEFAULT_REGION}
                     """
                 }
             }
@@ -45,8 +44,10 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Build the Docker image
-                    sh 'docker build -t ${REPO_NAME} .'
+                    dir('EKS') {
+                        // Build the Docker image
+                        sh "docker build -t ${REPO_NAME} ."
+                    }
                 }
             }
         }
@@ -55,7 +56,7 @@ pipeline {
             steps {
                 script {
                     // Tag the Docker image with the ECR URI
-                    sh 'docker tag ${REPO_NAME}:latest ${ECR_URI}:latest'
+                    sh "docker tag ${REPO_NAME}:latest ${ECR_URI}:latest"
                 }
             }
         }
@@ -64,7 +65,59 @@ pipeline {
             steps {
                 script {
                     // Push the Docker image to ECR
-                    sh 'docker push ${ECR_URI}:latest'
+                    sh "docker push ${ECR_URI}:latest"
+                }
+            }
+        }
+
+        stage('Create EKS Cluster') {
+            steps {
+                script {
+                    // Create EKS Cluster with eksctl (optional, only if needed)
+                    sh """
+                    eksctl create cluster --name ${CLUSTER_NAME} --region ${AWS_DEFAULT_REGION} --node-type t3.medium --nodes 3
+                    """
+                }
+            }
+        }
+
+        stage('Get Nodes from EKS Cluster') {
+            steps {
+                script {
+                    // Get nodes from the created EKS cluster using kubectl
+                    sh """
+                    aws eks --region ${AWS_DEFAULT_REGION} update-kubeconfig --name ${CLUSTER_NAME}
+                    kubectl get nodes
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    dir('EKS') {
+                       // Apply deployment and service
+                       sh """
+                       kubectl apply -f app_deployment.yaml
+                       kubectl apply -f app_service.yaml
+                       """
+                    }
+                }
+            }
+        }
+
+        stage('Check Kubernetes Resources') {
+            steps {
+                script {
+                    // Check if pods and services are running properly
+                    sh """
+                    kubectl get pods
+                    kubectl get svc
+                    kubectl get svc flask-app-service
+                    kubectl logs flask-app-deployment-8474ff8c4c-gz2t6
+                    kubectl logs flask-app-deployment-8474ff8c4c-qc4wl
+                    """
                 }
             }
         }
@@ -77,4 +130,3 @@ pipeline {
         }
     }
 }
-
