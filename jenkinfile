@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCESS_KEY_ID = credentials('Access_key_ID')
+        AWS_SECRET_ACCESS_KEY = credentials('Secret_access_key')
+        AWS_DEFAULT_REGION = "eu-west-2"
+        REPO_NAME  = 'job-application-app'
+        AWS_ACCOUNT_ID = '148761665406'
+        ECR_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${REPO_NAME}"
+    }
+    parameters {
+        choice(name: 'ACTION', choices: ['apply', 'destroy'], description: 'Select Terraform action')
+    }
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                script {
+                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/rahulbaluu/AWS-Terraform-Jenkins-Ansible.git']])
+                }
+            }
+        }
+
+        stage('Login to AWS ECR') {
+            steps {
+                script {
+                    // Log in to AWS ECR
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_URI}
+                    """
+                }
+            }
+        }
+
+        stage('Create ECR Repository (if not exists)') {
+            steps {
+                script {
+                    // Create the ECR repository if it doesn't exist
+                    sh """
+                    aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}
+                    """
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    // Build the Docker image
+                    sh 'docker build -t ${REPO_NAME} .'
+                }
+            }
+        }
+
+        stage('Tag Docker Image') {
+            steps {
+                script {
+                    // Tag the Docker image with the ECR URI
+                    sh 'docker tag ${REPO_NAME}:latest ${ECR_URI}:latest'
+                }
+            }
+        }
+
+        stage('Push Docker Image to ECR') {
+            steps {
+                script {
+                    // Push the Docker image to ECR
+                    sh 'docker push ${ECR_URI}:latest'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Clean up Docker images after the job runs
+            sh 'docker system prune -f'
+        }
+    }
+}
+

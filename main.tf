@@ -1,6 +1,8 @@
-resource "aws_default_vpc" "default" {
+resource "aws_vpc" "myvpc" {
+  cidr_block = var.vpc-cidr
   tags = {
-    Name = "Default VPC"
+    Name = "jenkins"
+    Environment = "Dev"
   }
 }
 
@@ -8,30 +10,41 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-resource "aws_default_subnet" "default_az1" {
-  availability_zone = data.aws_availability_zones.available.names[0]
+# Create an Internet Gateway
+resource "aws_internet_gateway" "my_igw" {
+  vpc_id = aws_vpc.myvpc.id
 
   tags = {
-    Name = "Default subnet for us-west-2"
+    Name = "My-Internet-Gateway"
   }
 }
 
-resource "aws_security_group" "example" {
-  name        = "aws_security_group"
-  description = "acess to port 22, 8080 and 9000"
-  vpc_id      = aws_default_vpc.default.id
+# Create a route to the Internet Gateway for public access
+resource "aws_route" "internet_access" {
+  route_table_id         = aws_vpc.myvpc.main_route_table_id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.my_igw.id
+}
+
+resource "aws_subnet" "subnet" {
+  vpc_id     = aws_vpc.myvpc.id
+  cidr_block = var.public_subnets
+  availability_zone = data.aws_availability_zones.available.names[0]
+
+  tags = {
+    Name = "jenkins-subnet"
+    Environment = "Dev"
+  }
+}
+
+resource "aws_security_group" "webSg" {
+  name   = var.sg-name
+  vpc_id = aws_vpc.myvpc.id
 
   ingress {
     cidr_blocks = ["0.0.0.0/0"]
     from_port   = 8080
     to_port     = 8080
-    protocol    = "tcp"
-  }
-
-  ingress {
-    cidr_blocks = ["0.0.0.0/0"]
-    from_port   = 9000
-    to_port     = 9000
     protocol    = "tcp"
   }
 
@@ -50,62 +63,46 @@ resource "aws_security_group" "example" {
   }
 
   tags   = {
-    Name = "jenkins server"
+    Name = "jenkins server security group"
+    Environment = "Dev"
   }
 }
 
-data "aws_ami" "ubuntu" {
 
-    most_recent = true
-
-    filter {
-        name   = "name"
-        values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
-    }
-
-    filter {
-        name = "virtualization-type"
-        values = ["hvm"]
-    }
-
-    owners = ["amazon"]
-}
-
-resource "aws_instance" "ec2_instance" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t2.micro"
-  subnet_id              = aws_default_subnet.default_az1.id
-  vpc_security_group_ids = [aws_security_group.example.id]
+resource "aws_instance" "server" {
+  ami                    = var.ami_id
+  instance_type          = var.instance_type
   key_name               = "demo"
+  vpc_security_group_ids = [aws_security_group.webSg.id]
+  subnet_id              = aws_subnet.subnet.id
+  associate_public_ip_address = true
 
-  tags = {
-    Environment = "dev"
-    Name = "jenkins Ubuntu server"
-  }
-}
-# an empty resource block
-resource "null_resource" "name" {
-  # ssh into the ec2 instance 
   connection {
     type        = "ssh"
-    user        = "ubuntu"
-    private_key = file("~/Downloads/demo.pem")
-    host        =  aws_instance.ec2_instance.public_ip
+    user        = "ubuntu"  # Replace with the appropriate username for your EC2 instance
+    private_key = file("~/Downloads/demo.pem")  # Replace with the path to your private key
+    host        = self.public_ip
   }
-  # copy the install_jenkins.sh file from your computer to the ec2 instance 
+
+   tags = {
+    Name = "My EC2 Server"
+    Environment = "Dev"
+  }
+
+   # copy the install_jenkins.sh file from your computer to the ec2 instance 
   provisioner "file" {
-    source      = "ubuntu-ec2-requirement-installation.sh"
-    destination = "/tmp/ubuntu-ec2-requirement-installation.sh"
+    source      = "jenkins-install.sh"
+    destination = "/tmp/jenkins-install.sh"
   }
 
   # set permissions and run the install_jenkins.sh file
   provisioner "remote-exec" {
     inline = [
-      "sudo chmod +x /tmp/ubuntu-ec2-requirement-installation.sh",
-      "sudo /bin/bash /tmp/ubuntu-ec2-requirement-installation.sh",
+        "sudo chmod +x /tmp/jenkins-install.sh",
+        "sh /tmp/jenkins-install.sh",
     ]
   }
 
   # wait for ec2 to be created
-  depends_on = [aws_instance.ec2_instance]
+  depends_on = [aws_instance.server]
 }
