@@ -62,7 +62,6 @@ echo "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -c
 
 # Add Docker's official GPG key
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/trusted.gpg.d/docker.asc
-sudo usermod -aG docker jenkins
 
 # Update apt package list
 sudo apt update
@@ -82,17 +81,32 @@ unzip awscliv2.zip
 sudo ./aws/install
 aws --version || { error "AWS CLI installation failed"; exit 1; }
 
-# Install kubectl
-info "Installing kubectl..."
-curl -LO "https://dl.k8s.io/release/v1.27.4/bin/linux/amd64/kubectl"
-chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
+# Update package list and install dependencies
+sudo apt-get update
+sudo apt-get install -y curl
 
-# Verify kubectl installation
+# Download and install eksctl
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/download/v0.138.0/eksctl_Linux_amd64.tar.gz" | tar xz -C /tmp
+
+# Move the binary to a directory in your $PATH
+sudo mv /tmp/eksctl /usr/local/bin
+
+# Verify the installation
+eksctl version || { error "eksctl installation failed"; exit 1; }
+
+# Update package list
+sudo apt-get update
+
+# Install kubectl
+sudo snap install kubectl --classic
+
+# Verify installation
 kubectl version --client || { error "kubectl installation failed"; exit 1; }
 
 # Show Jenkins initial password
 info "Displaying initial Jenkins admin password..."
+sudo usermod -aG docker jenkins
+sudo systemctl restart jenkins
 sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 
 info "Installation complete!"
